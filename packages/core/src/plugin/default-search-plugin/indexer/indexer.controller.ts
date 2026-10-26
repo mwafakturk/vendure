@@ -298,6 +298,9 @@ export class IndexerController {
         variantIds: ID[],
         channelId: ID,
     ): Promise<boolean> {
+        if (!variantIds.length) {
+            return true;
+        }
         const channel = await this.loadChannel(ctx, channelId);
         ctx.setChannel(channel);
         const { variants } = await this.getSearchIndexQueryBuilder(ctx, {
