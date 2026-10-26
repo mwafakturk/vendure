@@ -13,6 +13,7 @@ import {
     DefaultSearchPlugin,
     facetValueCollectionFilter,
     mergeConfig,
+    variantNameCollectionFilter,
 } from '@vendure/core';
 import {
     createErrorResultGuard,
@@ -1028,6 +1029,73 @@ describe('Default search plugin', () => {
                     'Slr Camera',
                 ]);
             });
+
+            it('updates index for all variants when a Collection with more than 50 variants is created', async () => {
+                const variantCount = 60;
+                const productIds: string[] = [];
+                for (let i = 1; i <= variantCount; i++) {
+                    const { createProduct } = await adminClient.query(createProductDocument, {
+                        input: {
+                            translations: [
+                                {
+                                    languageCode: LanguageCode.en,
+                                    name: `Bulk product ${i}`,
+                                    slug: `bulk-product-${i}`,
+                                    description: '',
+                                },
+                            ],
+                        },
+                    });
+                    await adminClient.query(createProductVariantsDocument, {
+                        input: [
+                            {
+                                productId: createProduct.id,
+                                sku: `BULK${i}`,
+                                price: 100,
+                                translations: [{ languageCode: LanguageCode.en, name: `Bulk variant ${i}` }],
+                            },
+                        ],
+                    });
+                    productIds.push(createProduct.id);
+                }
+                await awaitRunningJobs(adminClient, 30_000);
+
+                const { createCollection } = await adminClient.query(createCollectionDocument, {
+                    input: {
+                        translations: [
+                            {
+                                languageCode: LanguageCode.en,
+                                name: 'Bulk',
+                                description: '',
+                                slug: 'bulk',
+                            },
+                        ],
+                        filters: [
+                            {
+                                code: variantNameCollectionFilter.code,
+                                arguments: [
+                                    { name: 'operator', value: 'contains' },
+                                    { name: 'term', value: 'Bulk variant' },
+                                ],
+                            },
+                        ],
+                    },
+                });
+                await awaitRunningJobs(adminClient);
+                // add an additional check for the collection filters to update
+                await awaitRunningJobs(adminClient);
+
+                const result = await testProductsAdmin({
+                    collectionId: createCollection.id,
+                    groupByProduct: false,
+                });
+                expect(result.search.totalItems).toBe(variantCount);
+
+                for (const id of productIds) {
+                    await adminClient.query(deleteProductDocument, { id });
+                }
+                await awaitRunningJobs(adminClient, 30_000);
+            }, 60_000);
 
             it('updates index when a taxRate is changed', async () => {
                 await adminClient.query(updateTaxRateDocument, {

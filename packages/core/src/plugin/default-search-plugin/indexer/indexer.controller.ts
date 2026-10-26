@@ -143,6 +143,7 @@ export class IndexerController {
                     const { variants: batch } = await this.getSearchIndexQueryBuilder(ctx, {
                         channels: await this.getAllChannels(ctx),
                         productVariantIds: batchIds,
+                        take: batchIds.length,
                     });
 
                     await this.saveVariants(ctx, batch);
@@ -302,6 +303,7 @@ export class IndexerController {
         const { variants } = await this.getSearchIndexQueryBuilder(ctx, {
             channels: [channel],
             productVariantIds: variantIds,
+            take: variantIds.length,
         });
 
         if (variants) {
