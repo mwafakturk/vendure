@@ -22,6 +22,8 @@ import {
     minimumOrderAmount,
     orderPercentageDiscount,
     productsPercentageDiscount,
+    Promotion,
+    TransactionalConnection,
 } from '@vendure/core';
 import {
     createErrorResultGuard,
@@ -2578,6 +2580,22 @@ describe('Promotions applied to Orders', () => {
             });
             orderResultGuard.assertSuccess(applyCouponCode);
             expect(applyCouponCode.couponCodes).toEqual(['BUY_X_GET_Y']);
+        });
+
+        it('a promotion already saved without the required condition can still be disabled', async () => {
+            // Saved directly, as it could be before updatePromotion checked the required conditions
+            await server.app
+                .get(TransactionalConnection)
+                .rawConnection.getRepository(Promotion)
+                .update(
+                    { couponCode: 'TEN_OFF' },
+                    { actions: [{ code: buyXGetYFreeAction.code, args: [] }] },
+                );
+
+            const { updatePromotion } = await adminClient.query(updatePromotionDocument, {
+                input: { id: otherPromotion.id, enabled: false },
+            });
+            expect((updatePromotion as PromotionFragment).enabled).toBe(false);
         });
     });
 
