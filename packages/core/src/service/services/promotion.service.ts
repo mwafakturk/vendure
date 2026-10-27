@@ -192,6 +192,10 @@ export class PromotionService {
                         promotion.actions,
                     );
                 }
+                this.validateRequiredConditions(
+                    p.conditions ?? promotion.conditions,
+                    p.actions ?? promotion.actions,
+                );
             },
         });
         await this.customFieldRelationService.updateRelations(ctx, Promotion, input, updatedPromotion);

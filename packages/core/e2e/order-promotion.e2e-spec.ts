@@ -9,6 +9,8 @@ import {
 import { omit } from '@vendure/common/lib/omit';
 import { pick } from '@vendure/common/lib/pick';
 import {
+    buyXGetYFreeAction,
+    buyXGetYFreeCondition,
     containsProducts,
     customerGroup,
     defaultShippingCalculator,
@@ -70,6 +72,7 @@ import {
     testOrderWithPaymentsFragment,
     updatedOrderFragment,
 } from './graphql/shop-definitions';
+import { assertThrowsWithMessage } from './utils/assert-throws-with-message';
 import { addPaymentToOrder, proceedToArrangingPayment } from './utils/test-order-utils';
 
 describe('Promotions applied to Orders', () => {
@@ -2495,6 +2498,86 @@ describe('Promotions applied to Orders', () => {
             const { activeOrder: check2 } = await shopClient.query(getActiveOrderDocument);
             expect(check2!.lines[0].discountedUnitPriceWithTax).toBe(0);
             expect(check2!.totalWithTax).toBe(0);
+        });
+    });
+
+    describe('updatePromotion with an action that requires a condition', () => {
+        const buyXGetYCondition = () => ({
+            code: buyXGetYFreeCondition.code,
+            arguments: [
+                { name: 'amountX', value: '1' },
+                { name: 'variantIdsX', value: JSON.stringify([getVariantBySlug('item-100').id]) },
+                { name: 'amountY', value: '1' },
+                { name: 'variantIdsY', value: JSON.stringify([getVariantBySlug('item-1000').id]) },
+            ],
+        });
+        const buyXGetYAction = { code: buyXGetYFreeAction.code, arguments: [] };
+        const requiredConditionMessage = `The PromotionAction "${buyXGetYFreeAction.code}" requires the following conditions: ${buyXGetYFreeCondition.code}`;
+
+        let buyXGetYPromotion: PromotionFragment;
+        let otherPromotion: PromotionFragment;
+
+        beforeAll(async () => {
+            buyXGetYPromotion = await createPromotion({
+                enabled: true,
+                name: 'Buy X get Y',
+                couponCode: 'BUY_X_GET_Y',
+                conditions: [buyXGetYCondition()],
+                actions: [buyXGetYAction],
+            });
+            otherPromotion = await createPromotion({
+                enabled: true,
+                name: 'Ten percent off',
+                couponCode: 'TEN_OFF',
+                conditions: [minOrderAmountCondition(0)],
+                actions: [
+                    {
+                        code: orderPercentageDiscount.code,
+                        arguments: [{ name: 'discount', value: '10' }],
+                    },
+                ],
+            });
+        });
+
+        afterAll(async () => {
+            await deletePromotion(buyXGetYPromotion.id);
+            await deletePromotion(otherPromotion.id);
+        });
+
+        it(
+            'rejects replacing the required condition',
+            assertThrowsWithMessage(
+                () =>
+                    adminClient.query(updatePromotionDocument, {
+                        input: { id: buyXGetYPromotion.id, conditions: [minOrderAmountCondition(0)] },
+                    }),
+                requiredConditionMessage,
+            ),
+        );
+
+        it(
+            'rejects adding the action without its required condition',
+            assertThrowsWithMessage(
+                () =>
+                    adminClient.query(updatePromotionDocument, {
+                        input: { id: otherPromotion.id, actions: [buyXGetYAction] },
+                    }),
+                requiredConditionMessage,
+            ),
+        );
+
+        it('the coupon can still be applied', async () => {
+            shopClient.setChannelToken(E2E_DEFAULT_CHANNEL_TOKEN);
+            await shopClient.asAnonymousUser();
+            await shopClient.query(addItemToOrderDocument, {
+                productVariantId: getVariantBySlug('item-100').id,
+                quantity: 1,
+            });
+            const { applyCouponCode } = await shopClient.query(applyCouponCodeDocument, {
+                couponCode: 'BUY_X_GET_Y',
+            });
+            orderResultGuard.assertSuccess(applyCouponCode);
+            expect(applyCouponCode.couponCodes).toEqual(['BUY_X_GET_Y']);
         });
     });
 
