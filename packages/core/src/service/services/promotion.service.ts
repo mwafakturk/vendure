@@ -181,6 +181,7 @@ export class PromotionService {
         const actions = input.actions
             ? this.configArgService.parseInputList('PromotionAction', input.actions, promotion.actions)
             : promotion.actions;
+        // Skipped when neither is sent, so a promotion stored without a required condition can still be disabled
         if (input.conditions || input.actions) {
             this.validateRequiredConditions(conditions, actions);
         }
