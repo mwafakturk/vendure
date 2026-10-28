@@ -1145,6 +1145,19 @@ describe('Default search plugin', () => {
                     const result = await testProductsAdmin({ term: 'BULKUPDATED', groupByProduct: false });
                     expect(result.search.totalItems).toBe(variantCount);
                 });
+
+                it('updates index for all variants when a Product with more than 50 variants is disabled', async () => {
+                    const before = await testProductsShop({ term: 'Bulk variant', groupByProduct: false });
+                    expect(before.search.totalItems).toBe(variantCount);
+
+                    await adminClient.query(updateProductDocument, {
+                        input: { id: productId, enabled: false },
+                    });
+                    await awaitRunningJobs(adminClient);
+
+                    const after = await testProductsShop({ term: 'Bulk variant', groupByProduct: false });
+                    expect(after.search.totalItems).toBe(0);
+                });
             });
 
             it('updates index when a taxRate is changed', async () => {
