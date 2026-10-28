@@ -1135,6 +1135,16 @@ describe('Default search plugin', () => {
                     });
                     expect(result.search.totalItems).toBe(variantCount);
                 });
+
+                it('updates index for all variants of a single updateProductVariants call', async () => {
+                    await adminClient.query(updateProductVariantsDocument, {
+                        input: variantIds.map((id, i) => ({ id, sku: `BULKUPDATED${i}` })),
+                    });
+                    await awaitRunningJobs(adminClient);
+
+                    const result = await testProductsAdmin({ term: 'BULKUPDATED', groupByProduct: false });
+                    expect(result.search.totalItems).toBe(variantCount);
+                });
             });
 
             it('updates index when a taxRate is changed', async () => {
