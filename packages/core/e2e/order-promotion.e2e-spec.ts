@@ -2569,10 +2569,17 @@ describe('Promotions applied to Orders', () => {
         );
 
         it('the coupon can still be applied', async () => {
+            const { promotion } = await adminClient.query(getPromotionDocument, { id: buyXGetYPromotion.id });
+            expect(promotion!.conditions.map(c => c.code)).toEqual([buyXGetYFreeCondition.code]);
+
             shopClient.setChannelToken(E2E_DEFAULT_CHANNEL_TOKEN);
             await shopClient.asAnonymousUser();
             await shopClient.query(addItemToOrderDocument, {
                 productVariantId: getVariantBySlug('item-100').id,
+                quantity: 1,
+            });
+            await shopClient.query(addItemToOrderDocument, {
+                productVariantId: getVariantBySlug('item-1000').id,
                 quantity: 1,
             });
             const { applyCouponCode } = await shopClient.query(applyCouponCodeDocument, {
@@ -2580,10 +2587,15 @@ describe('Promotions applied to Orders', () => {
             });
             orderResultGuard.assertSuccess(applyCouponCode);
             expect(applyCouponCode.couponCodes).toEqual(['BUY_X_GET_Y']);
+            const freeLine = applyCouponCode.lines.find(
+                l => l.productVariant.id === getVariantBySlug('item-1000').id,
+            );
+            expect(freeLine!.discounts.map(d => d.description)).toEqual(['Buy X get Y']);
+            expect(freeLine!.discountedUnitPriceWithTax).toBe(0);
         });
 
         it('a promotion already saved without the required condition can still be disabled', async () => {
-            // Saved directly, as it could be before updatePromotion checked the required conditions
+            // Writes the invalid state with the repository because updatePromotion rejects it
             await server.app
                 .get(TransactionalConnection)
                 .rawConnection.getRepository(Promotion)
