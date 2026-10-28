@@ -37,12 +37,14 @@ import {
 import { channelFragment } from './graphql/fragments-admin';
 import { FragmentOf, ResultOf, VariablesOf } from './graphql/graphql-admin';
 import {
+    addOptionGroupToProductDocument,
     assignProductToChannelDocument,
     assignProductVariantToChannelDocument,
     createChannelDocument,
     createCollectionDocument,
     createFacetDocument,
     createProductDocument,
+    createProductOptionGroupDocument,
     createProductVariantsDocument,
     deleteAssetDocument,
     deleteProductDocument,
@@ -1030,72 +1032,110 @@ describe('Default search plugin', () => {
                 ]);
             });
 
-            it('updates index for all variants when a Collection with more than 50 variants is created', async () => {
+            // #5673 — updates affecting more than 50 variants must index all of them
+            describe('updates affecting more than 50 variants', () => {
                 const variantCount = 60;
-                const productIds: string[] = [];
-                for (let i = 1; i <= variantCount; i++) {
+                let productId: string;
+                const variantIds: string[] = [];
+
+                beforeAll(async () => {
                     const { createProduct } = await adminClient.query(createProductDocument, {
                         input: {
                             translations: [
                                 {
                                     languageCode: LanguageCode.en,
-                                    name: `Bulk product ${i}`,
-                                    slug: `bulk-product-${i}`,
+                                    name: 'Bulk product',
+                                    slug: 'bulk-product',
                                     description: '',
                                 },
                             ],
                         },
                     });
-                    await adminClient.query(createProductVariantsDocument, {
-                        input: [
-                            {
-                                productId: createProduct.id,
-                                sku: `BULK${i}`,
-                                price: 100,
-                                translations: [{ languageCode: LanguageCode.en, name: `Bulk variant ${i}` }],
+                    productId = createProduct.id;
+                    const { createProductOptionGroup } = await adminClient.query(
+                        createProductOptionGroupDocument,
+                        {
+                            input: {
+                                code: 'bulk',
+                                translations: [{ languageCode: LanguageCode.en, name: 'Bulk' }],
+                                options: Array.from({ length: variantCount }, (_, i) => ({
+                                    code: `bulk-${i}`,
+                                    translations: [{ languageCode: LanguageCode.en, name: `${i}` }],
+                                })),
                             },
-                        ],
+                        },
+                    );
+                    await adminClient.query(addOptionGroupToProductDocument, {
+                        productId,
+                        optionGroupId: createProductOptionGroup.id,
                     });
-                    productIds.push(createProduct.id);
-                }
-                await awaitRunningJobs(adminClient, 30_000);
-
-                const { createCollection } = await adminClient.query(createCollectionDocument, {
-                    input: {
-                        translations: [
+                    // Create the variants in two calls, so that each update-variants job
+                    // holds fewer than 50 variants and the initial index is complete.
+                    const half = variantCount / 2;
+                    for (const options of [
+                        createProductOptionGroup.options.slice(0, half),
+                        createProductOptionGroup.options.slice(half),
+                    ]) {
+                        const { createProductVariants } = await adminClient.query(
+                            createProductVariantsDocument,
                             {
-                                languageCode: LanguageCode.en,
-                                name: 'Bulk',
-                                description: '',
-                                slug: 'bulk',
+                                input: options.map(option => ({
+                                    productId,
+                                    sku: `BULK${option.name}`,
+                                    price: 100,
+                                    optionIds: [option.id],
+                                    translations: [
+                                        {
+                                            languageCode: LanguageCode.en,
+                                            name: `Bulk variant ${option.name}`,
+                                        },
+                                    ],
+                                })),
                             },
-                        ],
-                        filters: [
-                            {
-                                code: variantNameCollectionFilter.code,
-                                arguments: [
-                                    { name: 'operator', value: 'contains' },
-                                    { name: 'term', value: 'Bulk variant' },
-                                ],
-                            },
-                        ],
-                    },
-                });
-                await awaitRunningJobs(adminClient);
-                // add an additional check for the collection filters to update
-                await awaitRunningJobs(adminClient);
+                        );
+                        variantIds.push(...createProductVariants.map(v => v!.id));
+                    }
+                    await awaitRunningJobs(adminClient);
+                }, TEST_SETUP_TIMEOUT_MS);
 
-                const result = await testProductsAdmin({
-                    collectionId: createCollection.id,
-                    groupByProduct: false,
+                afterAll(async () => {
+                    await adminClient.query(deleteProductDocument, { id: productId });
+                    await awaitRunningJobs(adminClient);
                 });
-                expect(result.search.totalItems).toBe(variantCount);
 
-                for (const id of productIds) {
-                    await adminClient.query(deleteProductDocument, { id });
-                }
-                await awaitRunningJobs(adminClient, 30_000);
-            }, 60_000);
+                it('updates index for all variants when a Collection with more than 50 variants is created', async () => {
+                    const { createCollection } = await adminClient.query(createCollectionDocument, {
+                        input: {
+                            translations: [
+                                {
+                                    languageCode: LanguageCode.en,
+                                    name: 'Bulk',
+                                    description: '',
+                                    slug: 'bulk',
+                                },
+                            ],
+                            filters: [
+                                {
+                                    code: variantNameCollectionFilter.code,
+                                    arguments: [
+                                        { name: 'operator', value: 'contains' },
+                                        { name: 'term', value: 'Bulk variant' },
+                                    ],
+                                },
+                            ],
+                        },
+                    });
+                    await awaitRunningJobs(adminClient);
+                    // add an additional check for the collection filters to update
+                    await awaitRunningJobs(adminClient);
+
+                    const result = await testProductsAdmin({
+                        collectionId: createCollection.id,
+                        groupByProduct: false,
+                    });
+                    expect(result.search.totalItems).toBe(variantCount);
+                });
+            });
 
             it('updates index when a taxRate is changed', async () => {
                 await adminClient.query(updateTaxRateDocument, {
